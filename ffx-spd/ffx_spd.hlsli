@@ -46,6 +46,8 @@
 // 7. Wave intrinsics (i.e. SM 6.0) are presumed available.
 // 8. SpdLoad was renamed to SpdLoad_Mip6 to indicate that MIP index 6 should be read.
 // 9. SpdResetAtomicCounter is only called by one thread in the final thread group.
+// 10. SpdStore's mip parameter is now the actual mip index (instead of off-by-one)
+//     for the mip being written.
 ////////////////////////////////////////////////////////////////////////////////
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -57,12 +59,14 @@
 template <typename T>
 T SpdLoadSourceImage(int2 texel, uint slice);
 
-// Load a texel from a given slice in the 6th mip level (0-indexed).
+// Load a texel from a given slice in the mip level 6 (0-indexed).
 template <typename T>
 T SpdLoad_Mip6(int2 texel, uint slice);
 
 // Store a texel in a given mip slice. Note that for mip == 6, a globallycoherent
-// descriptor reference is needed.
+// descriptor reference is needed. Note that the mip parameter is different from
+// the original SPD code, which had off-by-one indexing. The mip value passed here
+// is the mip we are writing to, not the mip we are currently downsampling.
 template <typename T>
 void SpdStore(int2 texel, T value, uint mip, uint slice);
 
@@ -216,22 +220,22 @@ void SpdDownsampleMips_0_1(
     int2 tex = int2(workGroupID.xy * 64) + int2(x * 2, y * 2);
     int2 pix = int2(workGroupID.xy * 32) + int2(x, y);
     v[0] = SpdReduceLoadSourceImage<T>(tex, slice);
-    SpdStore<T>(pix, v[0], 0, slice);
+    SpdStore<T>(pix, v[0], 1, slice);
 
     tex = int2(workGroupID.xy * 64) + int2(x * 2 + 32, y * 2);
     pix = int2(workGroupID.xy * 32) + int2(x + 16, y);
     v[1] = SpdReduceLoadSourceImage<T>(tex, slice);
-    SpdStore<T>(pix, v[1], 0, slice);
+    SpdStore<T>(pix, v[1], 1, slice);
     
     tex = int2(workGroupID.xy * 64) + int2(x * 2, y * 2 + 32);
     pix = int2(workGroupID.xy * 32) + int2(x, y + 16);
     v[2] = SpdReduceLoadSourceImage<T>(tex, slice);
-    SpdStore<T>(pix, v[2], 0, slice);
+    SpdStore<T>(pix, v[2], 1, slice);
     
     tex = int2(workGroupID.xy * 64) + int2(x * 2 + 32, y * 2 + 32);
     pix = int2(workGroupID.xy * 32) + int2(x + 16, y + 16);
     v[3] = SpdReduceLoadSourceImage<T>(tex, slice);
-    SpdStore<T>(pix, v[3], 0, slice);
+    SpdStore<T>(pix, v[3], 1, slice);
 
     if (mip <= 1)
         return;
@@ -244,22 +248,22 @@ void SpdDownsampleMips_0_1(
     if ((localInvocationIndex % 4) == 0)
     {
         SpdStore<T>(int2(workGroupID.xy * 16) + 
-            int2(x/2, y/2), v[0], 1, slice);
+            int2(x/2, y/2), v[0], 2, slice);
         SpdStoreIntermediate<T>(
             x/2, y/2, v[0]);
 
         SpdStore<T>(int2(workGroupID.xy * 16) + 
-            int2(x/2 + 8, y/2), v[1], 1, slice);
+            int2(x/2 + 8, y/2), v[1], 2, slice);
         SpdStoreIntermediate<T>(
             x/2 + 8, y/2, v[1]);
 
         SpdStore<T>(int2(workGroupID.xy * 16) + 
-            int2(x/2, y/2 + 8), v[2], 1, slice);
+            int2(x/2, y/2 + 8), v[2], 2, slice);
         SpdStoreIntermediate<T>(
             x/2, y/2 + 8, v[2]);
 
         SpdStore<T>(int2(workGroupID.xy * 16) + 
-            int2(x/2 + 8, y/2 + 8), v[3], 1, slice);
+            int2(x/2 + 8, y/2 + 8), v[3], 2, slice);
         SpdStoreIntermediate<T>(
             x/2 + 8, y/2 + 8, v[3]);
     }
@@ -331,28 +335,28 @@ void SpdDownsampleMips_6_7(uint x, uint y, uint mips, uint slice)
     int2 tex = int2(x * 4 + 0, y * 4 + 0);
     int2 pix = int2(x * 2 + 0, y * 2 + 0);
     T v0 = SpdReduceLoad4<T>(tex, slice);
-    SpdStore<T>(pix, v0, 6, slice);
+    SpdStore<T>(pix, v0, 7, slice);
 
     tex = int2(x * 4 + 2, y * 4 + 0);
     pix = int2(x * 2 + 1, y * 2 + 0);
     T v1 = SpdReduceLoad4<T>(tex, slice);
-    SpdStore<T>(pix, v1, 6, slice);
+    SpdStore<T>(pix, v1, 7, slice);
 
     tex = int2(x * 4 + 0, y * 4 + 2);
     pix = int2(x * 2 + 0, y * 2 + 1);
     T v2 = SpdReduceLoad4<T>(tex, slice);
-    SpdStore<T>(pix, v2, 6, slice);
+    SpdStore<T>(pix, v2, 7, slice);
 
     tex = int2(x * 4 + 2, y * 4 + 2);
     pix = int2(x * 2 + 1, y * 2 + 1);
     T v3 = SpdReduceLoad4<T>(tex, slice);
-    SpdStore<T>(pix, v3, 6, slice);
+    SpdStore<T>(pix, v3, 7, slice);
 
     if (mips <= 7) return;
     // no barrier needed, working on values only from the same thread
 
     T v = SpdReduce4<T>(v0, v1, v2, v3);
-    SpdStore<T>(int2(x, y), v, 7, slice);
+    SpdStore<T>(int2(x, y), v, 8, slice);
     SpdStoreIntermediate<T>(x, y, v);
 }
 
@@ -368,19 +372,19 @@ void SpdDownsampleNextFour(
 {
     if (mips <= baseMip) return;
     GroupMemoryBarrierWithGroupSync();
-    SpdDownsampleMip_2<T>(x, y, workGroupID, localInvocationIndex, baseMip, slice);
+    SpdDownsampleMip_2<T>(x, y, workGroupID, localInvocationIndex, baseMip + 1, slice);
 
     if (mips <= baseMip + 1) return;
     GroupMemoryBarrierWithGroupSync();
-    SpdDownsampleMip_3<T>(x, y, workGroupID, localInvocationIndex, baseMip + 1, slice);
+    SpdDownsampleMip_3<T>(x, y, workGroupID, localInvocationIndex, baseMip + 2, slice);
 
     if (mips <= baseMip + 2) return;
     GroupMemoryBarrierWithGroupSync();
-    SpdDownsampleMip_4<T>(x, y, workGroupID, localInvocationIndex, baseMip + 2, slice);
+    SpdDownsampleMip_4<T>(x, y, workGroupID, localInvocationIndex, baseMip + 3, slice);
 
     if (mips <= baseMip + 3) return;
     GroupMemoryBarrierWithGroupSync();
-    SpdDownsampleMip_5<T>(workGroupID, localInvocationIndex, baseMip + 3, slice);
+    SpdDownsampleMip_5<T>(workGroupID, localInvocationIndex, baseMip + 4, slice);
 }
 
 template <typename T>
